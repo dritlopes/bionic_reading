@@ -120,7 +120,7 @@ def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True):
 
 def main():
 
-    # Sort texts and questions from chatgpt output into a csv file
+    # # Sort texts and questions from chatgpt output into a csv file
     chatgpt_texts_filepath = "data/chatgpt_texts.txt"
     texts_filepath = "data/texts.csv"
     questions_filepath = "data/questions.csv"
@@ -142,10 +142,10 @@ def main():
     words_df = create_word_file(texts_df, nlp, syllabify, pos_tag, length)
     words_df.to_csv(words_filepath)
 
-    # # Extract saliency values and added them as a column to word data
-    language_model_name = "GroNLP/gpt2-small-dutch"
+    # Extract saliency values and added them as a column to word data
+    language_model_name = "GroNLP/bert-base-dutch-cased" # "GroNLP/gpt2-small-dutch"
     saliency_path = f'data/{language_model_name.replace("/","_")}_saliency.csv'
-    final_data_path = 'data/full_data.csv'
+    final_data_path = f'data/full_data_{language_model_name}.csv'
     texts_df = pd.read_csv('data/texts.csv')
     words_df = pd.read_csv('data/words.csv')
     saliency_df, words_plus_saliency_df = calculate_saliency_values(texts_df, words_df, language_model_name, saliency_path)
