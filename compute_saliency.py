@@ -251,16 +251,27 @@ def merge_multi_tokens(words, word_ids, pos_tags, summed_saliencies, tokenizer, 
 
     return adjusted_saliencies
 
-def normalize_saliency(group):
-
-    norm_saliency = (np.array(group['saliency'].tolist()) - np.min(group['saliency'].tolist())) / (np.max(group['saliency'].tolist()) - np.min(group['saliency'].tolist()))
-    group['norm_saliency'] = norm_saliency
-    return group
-
 def reassign_word_id(group):
 
     word_ids = [i for i, word in enumerate(group['word'].tolist())]
     group['word_id'] = word_ids
+    return group
+
+def processing_to_align_with_opensesame(words_df):
+
+    # remove punctuation from list
+    words_df = words_df[words_df['pos_tag'] != 'PUNCT']
+    # re-assign word_ids
+    words_df = words_df.groupby(['trial_id']).apply(lambda group: reassign_word_id(group)).reset_index(drop=True)
+    # remove exceptional case of punctuation attached to word, which spacy for some reason did not split into two tokens ("hand.")
+    words_df['word'] = words_df['word'].str.translate(str.maketrans('', '', '.,'))
+
+    return words_df
+
+def normalize_saliency(group):
+
+    norm_saliency = (np.array(group['saliency'].tolist()) - np.min(group['saliency'].tolist())) / (np.max(group['saliency'].tolist()) - np.min(group['saliency'].tolist()))
+    group['norm_saliency'] = norm_saliency
     return group
 
 def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, model_name:str, saliency_path) -> pd.DataFrame:
@@ -300,15 +311,11 @@ def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, mode
     saliencies = saliency_df.saliency_sum.values
     adjusted_saliencies = merge_multi_tokens(words, word_ids, pos_tags, saliencies, tokenizer, model_name)
     words_df['saliency'] = adjusted_saliencies
-    # remove punctuation from list
-    words_df = words_df[words_df['pos_tag'] != 'PUNCT']
-    # re-assign word_ids
-    words_df = words_df.groupby(['trial_id']).apply(lambda group: reassign_word_id(group)).reset_index(drop=True)
+
+    # processing words to align with opensesame words
+    words_df = processing_to_align_with_opensesame(words_df)
+
     # normalize saliencies
     words_df = words_df.groupby(['trial_id']).apply(lambda group: normalize_saliency(group)).reset_index(drop=True)
-    # # create bins for saliency values
-    # # bin 1 (0 - .008), bin 1 (.008 - .18), and bin 2 (.018 - 1.)
-    # words_df['norm_saliency_bin'] = pd.qcut(words_df['norm_saliency'], q=3, labels=False)
 
     return saliency_df, words_df
-
