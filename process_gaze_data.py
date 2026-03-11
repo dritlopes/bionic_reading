@@ -5,9 +5,6 @@ from pathlib import Path
 import pandas as pd
 import json
 import numpy as np
-from visualisations import visualise_fixations_on_text
-from collections import defaultdict
-
 
 class InterestArea:
 
@@ -647,7 +644,6 @@ class TrialSequence:
 
 def adjust_ia_boxes(words_df: pd.DataFrame, path_to_save: str = '') -> pd.DataFrame:
 
-    # TODO increase box horizontally for words at the start and end of lines
     # words_df['x_beginning'] = words_df['x_beginning'] + 2
     # words_df['x_end'] = words_df['x_end'] + 2
     words_df['y_beginning'] = words_df['y_beginning'] - 5
@@ -791,6 +787,19 @@ def create_word_dataframe(trial_sequence: TrialSequence) -> pd.DataFrame:
 
     return data
 
+def find_letter_x_location(word, word_location):
+
+    letter_pos_to_pixels = []
+    # TODO check if it is okay to assume that each letter has the same width (same number of pixels)
+    letter_pixels = (word_location[1] - word_location[0])/len(word)
+    begin_location = word_location[0]
+
+    for i in range(len(word)):
+        letter_pos_to_pixels.append((begin_location, begin_location + letter_pixels))
+        begin_location += letter_pixels
+
+    return letter_pos_to_pixels
+
 def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame) -> pd.DataFrame:
 
     reading_data_rows = []
@@ -802,7 +811,7 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
         # remove first fixation for each text for each participant
         text_data = text_data[text_data['fix_id'] > 0]
 
-        # remove fixations outside IAs # TODO check if this is okay. If so, should I re-do fix ids?
+        # remove fixations outside IAs
         text_data = text_data[text_data['word_id'] >= 0]
 
         for word in text_words.itertuples():
@@ -828,6 +837,7 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
                         'out_sacc_len': None,  # Length in words of first outgoing saccade
                         'out_sacc_dur': None,  # Duration in milliseconds of first outgoing saccade
                         'line_change': None, # If first incoming saccade resulted in line change
+                        'landing_pos': None
                         }
 
             # if any fixation on word
@@ -843,6 +853,14 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
 
                     row_dict['skip'] = 0
                     row_dict['first_fix_dur'] = word_fix_data['dur'].tolist()[0]
+
+                    # map pixels to letters and determine which letter the fixation was at
+                    fix_x_loc = word_fix_data['xp'].tolist()[0]
+                    letter_x_locations = find_letter_x_location(word.word_name, (word.x_beginning_new, word.x_end_new))
+                    for i, x_loc in enumerate(letter_x_locations):
+                        if x_loc[0] <= fix_x_loc < x_loc[1]:
+                            row_dict['landing_pos'] = i
+                            break
 
                     # gather first reading fixations
                     fix_ids_first_pass = [first_fix_id]
@@ -893,27 +911,55 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
     # filter out too short first fixations (<80ms)
     reading_df = reading_df[(reading_df['first_fix_dur'].isna()) | (reading_df['first_fix_dur'] >= 80)]
 
-    # TODO filter out too long total reading times (per manipulation)
-    # threshold = []
-    # for participant, data in reading_df.groupby('participant'):
-    #     reading_times = data['total_reading_time'].tolist()
-    #     cutoff = np.percentile(reading_times, 99)
-    #     threshold.append((participant, cutoff))
-    # for participant, cutoff in threshold:
-    #     reading_df = reading_df[(reading_df['participant_id']==participant) & (reading_df['total_reading_time']>=cutoff)]
+    # # filter out too long total reading times (per participant, per manipulation)
+    threshold = []
+    for group_id, data in reading_df.groupby(['participant', 'manipulation']):
+        reading_times = data['total_reading_time'].tolist()
+        reading_times = [value for value in reading_times if not np.isnan(value)]
+        cutoff = np.percentile(reading_times, 99)
+        threshold.append((group_id[0], group_id[1], cutoff))
+        # print(group_id[0], group_id[1], cutoff)
+    for participant, manipulation, cutoff in threshold:
+        reading_df = reading_df[(reading_df['participant_id']==participant)
+                                & (reading_df['manipulation']==manipulation)
+                                & (reading_df['total_reading_time']>=cutoff)]
+
+    # # filter out too long total reading times (per participant, per manipulation)
+    # cleaned_rows = []
+    # for group_id, data in reading_df.groupby(['participant', 'manipulation']):
+    #     reading_times = data['total_reading_time'].values.astype(float)
+    #     mask_not_nan = ~np.isnan(reading_times)
+    #     rt_clean = reading_times[mask_not_nan]
+    #     if len(rt_clean) > 1:
+    #         z_scores = (rt_clean - np.mean(rt_clean)) / np.std(rt_clean)
+    #         outlier_mask = np.zeros(len(reading_times), dtype=bool)
+    #         outlier_mask[mask_not_nan] = np.abs(z_scores) > 3
+    #         upper = np.mean(rt_clean) + 3 * np.std(rt_clean)
+    #     else:
+    #         outlier_mask = np.zeros(len(reading_times), dtype=bool)
+    #         upper = None
+    #     cleaned_rows.append(data.loc[~outlier_mask])
+    #     n_removed = len(data) - len(data.loc[~outlier_mask])
+    #     print('participant: ', group_id[0])
+    #     print('manipulation: ', group_id[1])
+    #     print('threshold: ', upper)
+    #     print("rows removed:", n_removed)
+    # reading_df = pd.concat(cleaned_rows, ignore_index=True)
 
     return reading_df
 
 def main():
 
     # data with word coordinates in opensesame experiment screen, needed to map x,y coordinates from eye-tracker to ia words
-    word_path = 'data/word_coordinates_subject_0_adjusted.csv'
+    word_path = 'data/word_coordinates_subject_0.csv'
     words_df = pd.read_csv(word_path)
     # optionally adjust IA boxes around words
     # words_df = adjust_ia_boxes(words_df, path_to_save=word_path)
     # map xy coordinates from opensesame to xy coordinates from eyelink
     words_df = convert_xy_coordinates(words_df, path_to_save=word_path.replace('.csv', '_converted.csv'))
     words_df = change_manipulation_names(words_df, path_to_save=word_path.replace('.csv', '_converted.csv'))
+    words_df = pd.read_csv('data/word_coordinates_subject_0_adjusted_converted.csv')
+
     # create a TextBlock with IAs for every text
     texts = []
     for text_info, data in words_df.groupby(['paragraph', 'text_manipulation']):

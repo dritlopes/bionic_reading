@@ -148,7 +148,39 @@ def add_missing_syllables(df):
 
     return df
 
-def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True):
+def get_letter_segments(word):
+
+    # author: Jamie Tribandyte
+    # Split: start, pvl_segment (to be bolded), and end.
+
+    word_len = len(word)
+    half_index = word_len // 2
+
+    if word_len < 9:  # Short words
+        # Letter to the left of center
+        if word_len % 2 == 0:  # Even length
+            start_segment = word[:half_index - 1]
+            pvl_segment = word[half_index - 1]
+            end_segment = word[half_index:]
+        else:  # Odd length
+            start_segment = word[:half_index - 1]
+            pvl_segment = word[half_index - 1]
+            end_segment = word[half_index:]
+    else:  # Long words (>= 9 letters)
+        if word_len % 2 == 0:  # Even length
+            # Two letters left of the split
+            start_segment = word[:half_index - 2]
+            pvl_segment = word[half_index - 2:half_index]
+            end_segment = word[half_index:]
+        else:  # Odd length
+            # Center letter + letter left of it
+            start_segment = word[:half_index - 1]
+            pvl_segment = word[half_index - 1:half_index + 1]
+            end_segment = word[half_index + 1:]
+
+    return [start_segment, pvl_segment, end_segment]
+
+def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True, pvl=True):
 
     if syllabify:
         nlp.add_pipe("syllables", after="tagger")
@@ -170,6 +202,8 @@ def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True):
                 df_dict['pos_tag'].append(token.pos_)
             if length:
                 df_dict['length'].append(len(token.text))
+            if pvl:
+                df_dict['pvl'].append(get_letter_segments(token.text))
 
     df = pd.DataFrame(df_dict)
 
@@ -177,7 +211,8 @@ def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True):
 
 def test_alignment_opensesame_words(spacy_df, os_df):
 
-    spacy_df = spacy_df[spacy_df['trial_id'] < 100]
+    # OS file only has experimental texts (ids 20 to 100)
+    spacy_df = spacy_df[(spacy_df['trial_id'] < 100) & (spacy_df['trial_id'] > 19)]
     for spacy_text_id, spacy_text_rows in spacy_df.groupby('trial_id'):
         os_text_rows = os_df[os_df['paragraph'] == spacy_text_id]
         for spacy_word_id, spacy_word in zip(spacy_text_rows['word_id'].tolist(), spacy_text_rows['word'].tolist()):
@@ -206,7 +241,7 @@ def main():
     # Create csv with each word as a row (word data)
     spacy_model_name = "nl_core_news_sm"
     words_filepath = "data/words.csv"
-    syllabify, pos_tag, length = True, True, True
+    syllabify, pos_tag, length, pvl = True, True, True, True
     # Try loading the model. If not found, download and load it
     try:
         nlp = spacy.load(spacy_model_name)
@@ -215,14 +250,14 @@ def main():
         download(spacy_model_name)
         nlp = spacy.load(spacy_model_name)
     texts_df = pd.read_csv(texts_filepath)
-    words_df = create_word_file(texts_df, nlp, syllabify, pos_tag, length)
+    words_df = create_word_file(texts_df, nlp, syllabify, pos_tag, length, pvl)
     words_df = add_missing_syllables(words_df)
     words_df.to_csv(words_filepath)
     # check alignment between spacy words and open sesame words
     words_df = pd.read_csv(words_filepath)
     words_df_without_punct = processing_to_align_with_opensesame(words_df)
     words_df_without_punct.to_csv('data/words_without_punct.csv', index=False)
-    os_df = pd.read_csv('data/words_opensesame.csv')
+    os_df = pd.read_csv('data/word_coordinates_subject_0.csv')
     test_alignment_opensesame_words(words_df_without_punct, os_df)
 
     # Extract saliency values and added them as a column to word data
