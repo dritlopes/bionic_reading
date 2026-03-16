@@ -808,143 +808,118 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
 
         text_words = word_data[(word_data['paragraph'] == text_info[1]) & (word_data['text_manipulation'] == text_info[2])]
 
-        # remove first fixation for each text for each participant
-        text_data = text_data[text_data['fix_id'] > 0]
-
         # remove fixations outside IAs
         text_data = text_data[text_data['word_id'] >= 0]
 
         for word in text_words.itertuples():
 
-            word_fix_data = text_data[(text_data['word_id']==word.word_index) & (text_data['word']==word.word_name)]
+            # not include first and last words for each text for each participant
+            if word.word_index not in [0, len(text_words)-1]:
 
-            # reading measures defined here https://link.springer.com/article/10.3758/s13428-017-0908-4/tables/2
-            # and here https://www.sr-research.com/support/thread-336.html
-            row_dict = {'participant': text_info[0],
-                        'text_id': text_info[1],
-                        'manipulation': text_info[2],
-                        'word_id': word.word_index,
-                        'word': word.word_name,
-                        'first_fix_dur': None, # The duration of the first fixation on a target region, provided that the first fixation does not occur after fixations on words further along in the text.
-                        'gaze_dur': None, # The total duration of all fixations in a target region until the eyes fixate a region of text that is either progressive or regressive to the target region, provided that the first fixation on the target region does not occur after any fixations on words further along in the text.
-                        'total_reading_time': None, # The total duration of all fixations in a target region.
-                        'skip': None, # An interest area is considered skipped if no fixation occurred in first-pass reading.
-                        'reg_out': None, # Whether regression(s) was made from the current interest area to earlier interest areas (e.g., previous parts of the sentence) prior to leaving that interest area in a forward direction. 1 if a saccade exits the current interest area to a lower word id (to the left in English) before a later interest area was fixated; 0 if not.
-                        'reg_in': None, # Whether the current interest area received at least one regression from later interest areas (e.g., later parts of the sentence). 1 if interest area was entered from a higher word id (from the right in English); 0 if not.
-                        'n_fix': None, # Total fixations falling in the interest area
-                        'in_sacc_len': None, # Length in words of first incoming saccade
-                        'in_sacc_dur': None, # Duration in milliseconds of first incoming saccade
-                        'out_sacc_len': None,  # Length in words of first outgoing saccade
-                        'out_sacc_dur': None,  # Duration in milliseconds of first outgoing saccade
-                        'line_change': None, # If first incoming saccade resulted in line change
-                        'landing_pos': None
-                        }
+                word_fix_data = text_data[(text_data['word_id']==word.word_index) & (text_data['word']==word.word_name)]
 
-            # if any fixation on word
-            if not word_fix_data.empty:
+                # reading measures defined here https://link.springer.com/article/10.3758/s13428-017-0908-4/tables/2
+                # and here https://www.sr-research.com/support/thread-336.html
+                row_dict = {'participant': text_info[0],
+                            'text_id': text_info[1],
+                            'manipulation': text_info[2],
+                            'word_id': word.word_index,
+                            'word': word.word_name,
+                            'first_fix_dur': None, # The duration of the first fixation on a target region, provided that the first fixation does not occur after fixations on words further along in the text.
+                            'gaze_dur': None, # The total duration of all fixations in a target region until the eyes fixate a region of text that is either progressive or regressive to the target region, provided that the first fixation on the target region does not occur after any fixations on words further along in the text.
+                            'total_reading_time': None, # The total duration of all fixations in a target region.
+                            'skip': None, # An interest area is considered skipped if no fixation occurred in first-pass reading.
+                            'reg_out': None, # Whether regression(s) was made from the current interest area to earlier interest areas (e.g., previous parts of the sentence) prior to leaving that interest area in a forward direction. 1 if a saccade exits the current interest area to a lower word id (to the left in English) before a later interest area was fixated; 0 if not.
+                            'reg_in': None, # Whether the current interest area received at least one regression from later interest areas (e.g., later parts of the sentence). 1 if interest area was entered from a higher word id (from the right in English); 0 if not.
+                            'n_fix': None, # Total fixations falling in the interest area
+                            'in_sacc_len': None, # Length in words of first incoming saccade
+                            'in_sacc_dur': None, # Duration in milliseconds of first incoming saccade
+                            'out_sacc_len': None,  # Length in words of first outgoing saccade
+                            'out_sacc_dur': None,  # Duration in milliseconds of first outgoing saccade
+                            'line_change': None, # If first incoming saccade resulted in line change
+                            'landing_pos': None
+                            }
 
-                # compute FFD, GD, SKIP, and REG_OUT
-                current_word_id = word.word_index
-                first_fix_id = word_fix_data['fix_id'].tolist()[0]
-                previous_fixations = text_data[text_data['fix_id'] < first_fix_id]
-                # if no previous fixations or previous fixations were on words positioned before the current word,
-                # the word was not skipped in first-pass reading
-                if previous_fixations.empty or all(previous_fixations['word_id'] < current_word_id):
+                # if any fixation on word
+                if not word_fix_data.empty:
 
-                    row_dict['skip'] = 0
-                    row_dict['first_fix_dur'] = word_fix_data['dur'].tolist()[0]
+                    # compute FFD, GD, SKIP, and REG_OUT
+                    current_word_id = word.word_index
+                    first_fix_id = word_fix_data['fix_id'].tolist()[0]
+                    previous_fixations = text_data[text_data['fix_id'] < first_fix_id]
+                    # if no previous fixations or previous fixations were on words positioned before the current word,
+                    # the word was not skipped in first-pass reading
+                    if previous_fixations.empty or all(previous_fixations['word_id'] < current_word_id):
 
-                    # map pixels to letters and determine which letter the fixation was at
-                    fix_x_loc = word_fix_data['xp'].tolist()[0]
-                    letter_x_locations = find_letter_x_location(word.word_name, (word.x_beginning_new, word.x_end_new))
-                    for i, x_loc in enumerate(letter_x_locations):
-                        if x_loc[0] <= fix_x_loc < x_loc[1]:
-                            row_dict['landing_pos'] = i
-                            break
+                        row_dict['skip'] = 0
+                        row_dict['first_fix_dur'] = word_fix_data['dur'].tolist()[0]
 
-                    # gather first reading fixations
-                    fix_ids_first_pass = [first_fix_id]
-                    current_fix_id = first_fix_id
+                        # map pixels to letters and determine which letter the fixation was at
+                        fix_x_loc = word_fix_data['xp'].tolist()[0]
+                        letter_x_locations = find_letter_x_location(word.word_name, (word.x_beginning_new, word.x_end_new))
+                        for i, x_loc in enumerate(letter_x_locations):
+                            if x_loc[0] <= fix_x_loc < x_loc[1]:
+                                row_dict['landing_pos'] = i
+                                break
+
+                        # gather first reading fixations
+                        fix_ids_first_pass = [first_fix_id]
+                        current_fix_id = first_fix_id
+                        for fixation in word_fix_data.itertuples():
+                            while fixation.fix_id - 1 == current_fix_id:
+                                fix_ids_first_pass.append(fixation.fix_id)
+                                current_fix_id = fixation.fix_id
+                        first_pass_fixations = word_fix_data[word_fix_data['fix_id'].isin(fix_ids_first_pass)]
+                        row_dict['gaze_dur'] = first_pass_fixations['dur'].sum()
+
+                        # compute outgoing regression
+                        reg_out = 0
+                        last_first_pass_fix_id = first_pass_fixations['fix_id'].tolist()[-1]
+                        # if next fixation after first-pass fixation is on earlier word, reg_out is 1.
+                        next_fixation = text_data[text_data['fix_id'] == last_first_pass_fix_id + 1]
+                        if not next_fixation.empty and next_fixation['word_id'].tolist()[0] < current_word_id:
+                            reg_out = 1
+                        row_dict['reg_out'] = reg_out
+
+                    # if any previous fixation was on later word in text, current word has been skipped in first-pass reading.
+                    else:
+                        row_dict['skip'] = 1
+
+                    # all passes to compute TRT, REG_IN, NFIX, SACC
+                    row_dict['total_reading_time'] = sum(word_fix_data['dur'].tolist())
+                    row_dict['n_fix'] = len(word_fix_data)
+                    row_dict['in_sacc_len'] = word_fix_data['in_sacc_len'].tolist()[0]
+                    row_dict['in_sacc_dur'] = word_fix_data['in_sacc_dur'].tolist()[0]
+                    row_dict['out_sacc_len'] = word_fix_data['out_sacc_len'].tolist()[0]
+                    row_dict['out_sacc_dur'] = word_fix_data['out_sacc_dur'].tolist()[0]
+                    row_dict['line_change'] = word_fix_data['line_change'].tolist()[0]
+                    reg_in = 0
                     for fixation in word_fix_data.itertuples():
-                        while fixation.fix_id - 1 == current_fix_id:
-                            fix_ids_first_pass.append(fixation.fix_id)
-                            current_fix_id = fixation.fix_id
-                    first_pass_fixations = word_fix_data[word_fix_data['fix_id'].isin(fix_ids_first_pass)]
-                    row_dict['gaze_dur'] = first_pass_fixations['dur'].sum()
+                        previous_fixation = text_data[text_data['fix_id'] == fixation.fix_id - 1]
+                        if not previous_fixation.empty and previous_fixation['word_id'].tolist()[0] > fixation.word_id:
+                            reg_in = 1
+                    row_dict['reg_in'] = reg_in
 
-                    # compute outgoing regression
-                    reg_out = 0
-                    last_first_pass_fix_id = first_pass_fixations['fix_id'].tolist()[-1]
-                    # if next fixation after first-pass fixation is on earlier word, reg_out is 1.
-                    next_fixation = text_data[text_data['fix_id'] == last_first_pass_fix_id + 1]
-                    if not next_fixation.empty and next_fixation['word_id'].tolist()[0] < current_word_id:
-                        reg_out = 1
-                    row_dict['reg_out'] = reg_out
-
-                # if any previous fixation was on later word in text, current word has been skipped in first-pass reading.
+                # if no fixations on word, word has been skipped.
                 else:
                     row_dict['skip'] = 1
 
-                # all passes to compute TRT, REG_IN, NFIX, SACC
-                row_dict['total_reading_time'] = sum(word_fix_data['dur'].tolist())
-                row_dict['n_fix'] = len(word_fix_data)
-                row_dict['in_sacc_len'] = word_fix_data['in_sacc_len'].tolist()[0]
-                row_dict['in_sacc_dur'] = word_fix_data['in_sacc_dur'].tolist()[0]
-                row_dict['out_sacc_len'] = word_fix_data['out_sacc_len'].tolist()[0]
-                row_dict['out_sacc_dur'] = word_fix_data['out_sacc_dur'].tolist()[0]
-                row_dict['line_change'] = word_fix_data['line_change'].tolist()[0]
-                reg_in = 0
-                for fixation in word_fix_data.itertuples():
-                    previous_fixation = text_data[text_data['fix_id'] == fixation.fix_id - 1]
-                    if not previous_fixation.empty and previous_fixation['word_id'].tolist()[0] > fixation.word_id:
-                        reg_in = 1
-                row_dict['reg_in'] = reg_in
-
-            # if no fixations on word, word has been skipped.
-            else:
-                row_dict['skip'] = 1
-
-            reading_data_rows.append(row_dict)
+                reading_data_rows.append(row_dict)
 
     reading_df = pd.DataFrame(reading_data_rows)
 
-    # filter out too short first fixations (<80ms)
+    # filter out words with too short first fixations (<80ms)
     reading_df = reading_df[(reading_df['first_fix_dur'].isna()) | (reading_df['first_fix_dur'] >= 80)]
 
-    # # filter out too long total reading times (per participant, per manipulation)
-    threshold = []
+    # filter out words with too long gaze durations (per participant, per manipulation)
+    filtered_dfs = []
     for group_id, data in reading_df.groupby(['participant', 'manipulation']):
-        reading_times = data['total_reading_time'].tolist()
-        reading_times = [value for value in reading_times if not np.isnan(value)]
+        reading_times = data['gaze_dur'].dropna()
         cutoff = np.percentile(reading_times, 99)
-        threshold.append((group_id[0], group_id[1], cutoff))
+        filtered = data[(data['gaze_dur'].isna()) | (data['gaze_dur']<=cutoff)]
+        filtered_dfs.append(filtered)
         # print(group_id[0], group_id[1], cutoff)
-    for participant, manipulation, cutoff in threshold:
-        reading_df = reading_df[(reading_df['participant_id']==participant)
-                                & (reading_df['manipulation']==manipulation)
-                                & (reading_df['total_reading_time']>=cutoff)]
-
-    # # filter out too long total reading times (per participant, per manipulation)
-    # cleaned_rows = []
-    # for group_id, data in reading_df.groupby(['participant', 'manipulation']):
-    #     reading_times = data['total_reading_time'].values.astype(float)
-    #     mask_not_nan = ~np.isnan(reading_times)
-    #     rt_clean = reading_times[mask_not_nan]
-    #     if len(rt_clean) > 1:
-    #         z_scores = (rt_clean - np.mean(rt_clean)) / np.std(rt_clean)
-    #         outlier_mask = np.zeros(len(reading_times), dtype=bool)
-    #         outlier_mask[mask_not_nan] = np.abs(z_scores) > 3
-    #         upper = np.mean(rt_clean) + 3 * np.std(rt_clean)
-    #     else:
-    #         outlier_mask = np.zeros(len(reading_times), dtype=bool)
-    #         upper = None
-    #     cleaned_rows.append(data.loc[~outlier_mask])
-    #     n_removed = len(data) - len(data.loc[~outlier_mask])
-    #     print('participant: ', group_id[0])
-    #     print('manipulation: ', group_id[1])
-    #     print('threshold: ', upper)
-    #     print("rows removed:", n_removed)
-    # reading_df = pd.concat(cleaned_rows, ignore_index=True)
+    reading_df = pd.concat(filtered_dfs, ignore_index=True)
 
     return reading_df
 

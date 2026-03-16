@@ -193,8 +193,8 @@ def extract_all_saliency(model: TFGPT2LMHeadModel | TFBertForMaskedLM,
                          embeddings,
                          tokenizer: GPT2Tokenizer | BertTokenizer,
                          texts:list[str],
-                         saliency_path,
-                         model_name: str)->pd.DataFrame:
+                         model_name: str,
+                         saliency_path:str='')->pd.DataFrame:
 
     """
     Compute saliency values for each word in each text.
@@ -224,8 +224,9 @@ def extract_all_saliency(model: TFGPT2LMHeadModel | TFBertForMaskedLM,
                            'distributed_saliency': all_dist_saliency,
                            'saliency_sum': all_saliency_sum})
 
-        # store temporary result
-        df.to_csv(saliency_path, index=False)
+        if saliency_path:
+            # store temporary result
+            df.to_csv(saliency_path, index=False)
 
     return df
 
@@ -306,7 +307,7 @@ def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, mode
         raise ValueError(f'Model {model_name} not supported.')
 
     print(f'Extract saliency with {model_name}')
-    saliency_df = extract_all_saliency(model, embeddings, tokenizer, texts, saliency_path, model_name)
+    saliency_df = extract_all_saliency(model, embeddings, tokenizer, texts, model_name, saliency_path)
     # saliency_df = pd.read_csv(saliency_path)
     saliencies = saliency_df.saliency_sum.values
     adjusted_saliencies = merge_multi_tokens(words, word_ids, pos_tags, saliencies, tokenizer, model_name)

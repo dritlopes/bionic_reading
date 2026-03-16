@@ -70,11 +70,12 @@ def create_text_and_question_files(chatgpt_output_filepath):
                                 'answers': answer_col,
                                 'correct_answer': correct_answer_col})
 
-    # replace generated texts which have language mistakes (corrected by RA Sophie who is also native Dutch
+    # replace generated texts which have language mistakes (corrected by RA Sophie who is also native Dutch)
     map_texts = {6: "Bij het opruimen van haar oma’s huis vond Elise een oud dagboek. De eerste bladzijden waren gevuld met jeugdherinneringen, maar naarmate ze verder las, ontdekte ze geheimen die haar oma nooit had verteld. Elise kwam erachter dat haar oma ooit een grote liefde had gehad, een man met wie ze nooit had kunnen trouwen. Dit verhaal had haar oma altijd met zich meegedragen, zonder het ooit met iemand te delen. Het dagboek gaf Elise een nieuw perspectief op de vrouw die ze dacht zo goed te kennen.",
                  11: "David wandelde in de vroege ochtend door het bos toen de mist ineens dikker werd. De paden om hem heen vervaagden en hij hoorde niets behalve zijn eigen ademhaling. Hij stond stil, luisterde naar de stilte en voelde een lichte angst opkomen. Maar toen zag hij in de verte een vage schaduw van een figuur. De schaduw bewoog langzaam, alsof deze ook verdwaald was. David twijfelde of hij dichterbij moest gaan of terug naar huis moest keren. Uiteindelijk besloot hij de figuur te volgen; zijn nieuwsgierigheid won het van zijn angst.",
                  13: "Jaarlijks werd er in het dorp een festival gehouden om de oogst te vieren, maar dit jaar leek iedereen het vergeten te zijn. Thomas liep door de straten en zag geen versieringen, geen kramen, niets dat op een feestdag leek. Hij vroeg de oude dorpsbewoner wat er gebeurd was. De man glimlachte mysterieus en zei dat sommige tradities alleen doorgaan als mensen er echt in geloven. Thomas besloot dat hij die avond toch het festival zou vieren, al was het alleen. Toen de zon onderging, stak hij een kaars aan op het dorpsplein.",
                  16: "Mila droeg altijd de ring die ze van haar oma had geërfd. Op een dag merkte ze dat de ring weg was. Ze zocht het hele huis door, maar hij was nergens te vinden. Ze herinnerde zich dat ze hem tijdens een wandeling langs het meer had gedragen. In paniek ging ze terug naar het pad langs het water. Na uren zoeken in de modder gaf ze het op. Terwijl ze weg wilde lopen, blonk er iets in het gras op. De ring lag daar, alsof hij op haar had gewacht.",
+                 17: "De oude bibliotheek stond bekend om zijn mysterieuze verleden. Mensen vertelden verhalen over een geest die 's avonds door de gangen zou dwalen. Marit, een sceptische studente, besloot een nacht in de bibliotheek door te brengen om te bewijzen dat het slechts verzinsels waren. Die nacht hoorde ze zachte voetstappen en geritsel van papieren. Omdat ze wist dat niemand anders in de bibliotheek was, bleef ze rustig. Maar toen een stapel boeken opeens van een tafel viel, voelde ze een koude rilling over haar rug. Misschien was er toch meer aan de hand.",
                  19: "Toen Mark voor het eerst zijn nieuwe buurman zag, was hij meteen op zijn hoede. De man leek afstandelijk en sprak nauwelijks met iemand in de buurt. Mark besloot dat er iets vreemds aan de hand was en begon de buurman in de gaten te houden. Elke avond om precies acht uur verliet de man zijn huis en keerde hij pas uren later terug. Op een dag besloot Mark hem te volgen, nieuwsgierig naar wat de man elke avond deed. Wat hij ontdekte, was echter totaal onverwacht: de buurman werkte als vrijwilliger in een opvanghuis.",
                  22: "In een hoek van de bibliotheek vond Tim een oud boek, bedekt met stof. De titel was vaag leesbaar, maar het trok zijn aandacht. Toen hij het opensloeg, ontdekte hij dat het vol stond met verhalen van vergeten helden, mensen die door de geschiedenis waren vergeten. Terwijl hij las, werd hij steeds meer in het boek gezogen, alsof de verhalen tot leven kwamen. Tim besloot het boek mee naar huis te nemen en elke nacht een verhaal te lezen. Het voelde alsof hij iets kostbaars in handen had.",
                  32: "Anna vond een oude brief tussen de pagina’s van een boek dat al jaren in haar kast stond. De brief was geschreven door een verre tante die ze nooit had gekend. In de brief stond een verhaal over verborgen familiegoud, verstopt op een geheime plek. Anna vond het vreemd dat niemand in de familie hier ooit over had gesproken. Ze besloot de aanwijzingen in de brief te volgen, in de hoop dat het geheim nog altijd ergens verborgen lag.",
@@ -137,7 +138,7 @@ def add_missing_syllables(df):
     }
     syllables = []
     for text_id, word_id, word, syllable in zip(df['trial_id'], df['word_id'], df['word'], df['syllable']):
-        if pd.isna(syllable):
+        if syllable is None:
             if word in map_syllables_missing.keys():
                 syllables.append(map_syllables_missing[word])
             else:
@@ -150,33 +151,26 @@ def add_missing_syllables(df):
 
 def get_letter_segments(word):
 
-    # author: Jamie Tribandyte
     # Split: start, pvl_segment (to be bolded), and end.
 
     word_len = len(word)
-    half_index = word_len // 2
+    # floor division
+    half_index = word_len // 2 - 1
 
-    if word_len < 9:  # Short words
+    if word_len == 3:  # Three-letter words should have the middle letter bolded
+        start_segment, pvl_segment, end_segment = word[0], word[1], word[2]
+
+    elif word_len < 9:  # Short words
         # Letter to the left of center
-        if word_len % 2 == 0:  # Even length
-            start_segment = word[:half_index - 1]
-            pvl_segment = word[half_index - 1]
-            end_segment = word[half_index:]
-        else:  # Odd length
-            start_segment = word[:half_index - 1]
-            pvl_segment = word[half_index - 1]
-            end_segment = word[half_index:]
-    else:  # Long words (>= 9 letters)
-        if word_len % 2 == 0:  # Even length
-            # Two letters left of the split
-            start_segment = word[:half_index - 2]
-            pvl_segment = word[half_index - 2:half_index]
-            end_segment = word[half_index:]
-        else:  # Odd length
-            # Center letter + letter left of it
-            start_segment = word[:half_index - 1]
-            pvl_segment = word[half_index - 1:half_index + 1]
-            end_segment = word[half_index + 1:]
+        start_segment = word[:half_index]
+        pvl_segment = word[half_index]
+        end_segment = word[half_index + 1:]
+
+    else:
+        if word_len % 2 != 0: half_index = word_len // 2
+        start_segment = word[:half_index - 1]
+        pvl_segment = word[half_index - 1: half_index + 1]
+        end_segment = word[half_index + 1:]
 
     return [start_segment, pvl_segment, end_segment]
 
