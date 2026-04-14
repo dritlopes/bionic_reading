@@ -6,7 +6,10 @@ import math
 from spacy.cli import download
 from spacy_syllables import SpacySyllables
 from compute_saliency import calculate_saliency_values, processing_to_align_with_opensesame
-
+from scipy import stats
+import numpy as np
+import seaborn as sns
+from matplotlib import pyplot as plt
 
 def create_text_and_question_files(chatgpt_output_filepath):
 
@@ -160,17 +163,17 @@ def get_letter_segments(word):
     if word_len == 3:  # Three-letter words should have the middle letter bolded
         start_segment, pvl_segment, end_segment = word[0], word[1], word[2]
 
-    elif word_len < 9:  # Short words
+    else:
         # Letter to the left of center
         start_segment = word[:half_index]
         pvl_segment = word[half_index]
         end_segment = word[half_index + 1:]
 
-    else:
-        if word_len % 2 != 0: half_index = word_len // 2
-        start_segment = word[:half_index - 1]
-        pvl_segment = word[half_index - 1: half_index + 1]
-        end_segment = word[half_index + 1:]
+    # else:
+    #     if word_len % 2 != 0: half_index = word_len // 2
+    #     start_segment = word[:half_index - 1]
+    #     pvl_segment = word[half_index - 1: half_index + 1]
+    #     end_segment = word[half_index + 1:]
 
     return [start_segment, pvl_segment, end_segment]
 
@@ -185,19 +188,23 @@ def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True, p
         doc = nlp(text)
         word_id = 0
         for i, token in enumerate(doc):
+            word = token.text
+            # handling spacy mistake when tokenizing "hand."
+            if token.text == 'hand.':
+                word = token.text.replace('.','')
             df_dict['trial_id'].append(text_id)
             df_dict['text'].append(text)
             df_dict['word_id'].append(word_id)
-            df_dict['word'].append(token.text)
+            df_dict['word'].append(word)
             word_id += 1
             if syllabify:
                 df_dict['syllable'].append(extract_syllables(token))
             if pos_tag:
                 df_dict['pos_tag'].append(token.pos_)
             if length:
-                df_dict['length'].append(len(token.text))
+                df_dict['length'].append(len(word))
             if pvl:
-                df_dict['pvl'].append(get_letter_segments(token.text))
+                df_dict['pvl'].append(get_letter_segments(word))
 
     df = pd.DataFrame(df_dict)
 
@@ -246,7 +253,7 @@ def main():
     texts_df = pd.read_csv(texts_filepath)
     words_df = create_word_file(texts_df, nlp, syllabify, pos_tag, length, pvl)
     words_df = add_missing_syllables(words_df)
-    words_df.to_csv(words_filepath)
+    words_df.to_csv(words_filepath, index=False)
     # check alignment between spacy words and open sesame words
     words_df = pd.read_csv(words_filepath)
     words_df_without_punct = processing_to_align_with_opensesame(words_df)
@@ -257,7 +264,7 @@ def main():
     # Extract saliency values and added them as a column to word data
     language_model_name = "GroNLP/bert-base-dutch-cased" # "GroNLP/gpt2-small-dutch"
     saliency_path = f'data/{language_model_name.replace("/","_")}_saliency.csv'
-    final_data_path = f'data/full_data_{language_model_name.replace("/","_")}.csv'
+    final_data_path = f'data/words_{language_model_name.replace("/","_")}.csv'
     texts_df = pd.read_csv('data/texts.csv')
     words_df = pd.read_csv('data/words.csv')
     saliency_df, words_plus_saliency_df = calculate_saliency_values(texts_df, words_df, language_model_name, saliency_path)

@@ -5,6 +5,29 @@ from pathlib import Path
 import pandas as pd
 import json
 import numpy as np
+from PIL import ImageFont
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+class Char:
+    def __init__(self,
+                 char: str,
+                 width: float,
+                 sxp: float,
+                 exp: float,
+                 bold: bool):
+        self.char = char
+        self.width = width
+        self.sxp = sxp
+        self.exp = exp
+        self.bold = bold
+
+    def to_dict(self) -> dict:
+        return {
+            'char': self.char,
+            'sxp': self.sxp,
+            'exp': self.exp,
+            'bold': self.bold}
 
 class InterestArea:
 
@@ -24,6 +47,126 @@ class InterestArea:
         self.exp = exp
         self.eyp = eyp
         self.line = line
+        self.variables = dict()
+
+    def parse_exp_variables_to_ia(self, data, variables):
+
+        if 'pvl' in variables and 'pvl' in data.columns:
+            self.variables['pvl'] = data.loc[data['word_id']==self.word_id, 'pvl'].values[0]
+            self.variables['pvl'] = self.variables['pvl'].split(', ')
+            self.variables['pvl'] = [segment.replace('[', '').replace(']','').replace("'","") for segment in self.variables['pvl']]
+
+        if 'pos_tag' in variables and 'pos_tag' in data.columns:
+            self.variables['pos_tag'] = data.loc[data['word_id'] == self.word_id, 'pos_tag'].values[0]
+
+        if 'norm_saliency' in variables and 'norm_saliency' in data.columns:
+            self.variables['norm_saliency'] = data.loc[data['word_id'] == self.word_id, 'norm_saliency'].values[0]
+
+    @staticmethod
+    def find_char_width(character, character_position, n_characters, font_regular, font_bold, manipulation, exp_type, variables):
+
+        width, bold = None, None
+
+        if manipulation == 'block_normal':
+            width = font_regular.getlength(character)
+            bold = False
+
+        elif manipulation == 'block_bionic':
+            if n_characters == 1:
+                width = font_bold.getlength(character)
+                bold = True
+            else:
+                half = n_characters // 2
+                if character_position < half:
+                    width = font_bold.getlength(character)
+                    bold = True
+                else:
+                    width = font_regular.getlength(character)
+                    bold = False
+
+        elif manipulation == 'block_bionic_pvl':
+            if 'pvl' in variables.keys():
+                segments = variables['pvl']
+                pvl_pos = len(segments[0])
+                if character_position == pvl_pos:
+                    width = font_bold.getlength(character)
+                    bold = True
+                else:
+                    width = font_regular.getlength(character)
+                    bold = False
+
+        elif manipulation == 'block_part_of_speech':
+            if 'pos_tag' in variables.keys():
+                pos_tag = variables['pos_tag']
+                if pos_tag in ['NOUN', 'VERB', 'PROPN', 'ADJ', 'ADV', 'INTJ']:
+                    # pos-tag in pvl experiment -> bold pvl of content words
+                    if exp_type == 'exp_pvl':
+                        if 'pvl' in variables.keys():
+                            segments = variables['pvl']
+                            pvl_pos = len(segments[0])
+                            if character_position == pvl_pos:
+                                width = font_bold.getlength(character)
+                                bold = True
+                            else:
+                                width = font_regular.getlength(character)
+                                bold = False
+                    # pos-tag in saliency experiment -> bold half of content words
+                    else:
+                        half = n_characters // 2
+                        if character_position < half:
+                            width = font_bold.getlength(character)
+                            bold = True
+                        else:
+                            width = font_regular.getlength(character)
+                            bold = False
+                else:
+                    width = font_regular.getlength(character)
+                    bold = False
+
+        elif manipulation == 'block_word_importance':
+            if 'norm_saliency' in variables.keys():
+                word_importance = variables['norm_saliency']
+                if word_importance > 0.2:
+                    if n_characters == 1:
+                        width = font_bold.getlength(character)
+                        bold = True
+                    else:
+                        half = n_characters // 2
+                        if character_position < half:
+                            width = font_bold.getlength(character)
+                            bold = True
+                        else:
+                            width = font_regular.getlength(character)
+                            bold = False
+                else:
+                    width = font_regular.getlength(character)
+                    bold = False
+
+        return width, bold
+
+    def map_ia_to_chars(self, manipulation, font_face, font_size, exp_type):
+
+        chars = []
+        x_loc = self.sxp + 2 # starting location of word (also considering ia box surrounding word starts 2 pixels before word)
+        word = self.word # the word itself
+        variables = self.variables # word variables, such as pvl segmentation, saliency score, and part-of-speech tag
+
+        # get letter sizes in the font
+        if 'serif' in font_face.lower():
+            font_regular = ImageFont.truetype("data/Droid Serif Regular.ttf", size=font_size)
+            font_bold = ImageFont.truetype("data/Droid Serif Bold.ttf", size=font_size)
+        else:
+            raise ValueError('We only support the font Droid Serif. Please specify font as serif.')
+
+        # specify which letters are bolded according to experimental condition
+        for i, c in enumerate(word):
+            width, bold = self.find_char_width(c, i, len(word), font_regular, font_bold, manipulation, exp_type, variables)
+            sxp = x_loc
+            x_loc += width
+            char = Char(c,width,sxp,x_loc,bold)
+            chars.append(char)
+            # print(char.char, char.bold, char.width, char.sxp, char.exp)
+        self.chars = chars
 
     def to_dict(self) -> dict:
         return {'word_id': self.word_id,
@@ -32,13 +175,15 @@ class InterestArea:
                 'syp': self.syp,
                 'exp': self.exp,
                 'eyp': self.eyp,
-                'line_id': self.line}
+                'line_id': self.line,
+                'chars': [char.to_dict() for char in self.chars]}
 
 class TextBlock:
 
     def __init__(self,
                  ias:List[InterestArea]=None,
                  text_id:str=None,
+                 exp_type:str=None,
                  manipulation:str=None,
                  line_height:float=None,
                  midlines:List[float]=None,
@@ -49,6 +194,7 @@ class TextBlock:
 
         self.ias = ias
         self.text_id = text_id
+        self.exp_type = exp_type
         self.manipulation = manipulation
         self.line_height = line_height
         self.midlines = midlines
@@ -57,7 +203,7 @@ class TextBlock:
         self.font_size = font_size
         self.font_face = font_face
 
-    def parse_text_into_ias(self, words_df:pd.DataFrame):
+    def parse_text_into_ias(self, words_df:pd.DataFrame, text_variables:pd.DataFrame, exp_variables:List[str]):
 
 
         y_end_of_lines = words_df['y_end_new'].unique()
@@ -65,7 +211,9 @@ class TextBlock:
         line_mapping = dict(zip(y_end_of_lines, lines_ids))
 
         ias = []
+
         for row in words_df.itertuples():
+
             ia = InterestArea(word_id = int(row.word_index),
                               word = str(row.word_name),
                               sxp = float(row.x_beginning_new),
@@ -73,6 +221,10 @@ class TextBlock:
                               exp = float(row.x_end_new),
                               eyp = float(row.y_end_new),
                               line = int(line_mapping[row.y_end_new]))
+
+            ia.parse_exp_variables_to_ia(text_variables, exp_variables)
+            ia.map_ia_to_chars(self.manipulation, self.font_face, self.font_size, self.exp_type)
+            # print(ia.word, ia.variables['norm_saliency'], ia.sxp, ia.exp)
             ias.append(ia)
         self.ias = ias
 
@@ -99,16 +251,19 @@ class TextBlock:
 
 class Sample:
 
-    def __init__(self, time:int, xp:float, yp:float, ia:InterestArea|None=None):
+    def __init__(self, time:int, xp:float, yp:float, ia:InterestArea|None=None, ia_char:str=None, ia_char_pos:int=None):
 
         self.time = time
         self.xp = xp
         self.yp = yp
         self.ia = ia
+        self.ia_char = ia_char
+        self.ia_char_pos = ia_char_pos
 
     def to_dict(self):
         return {'time': self.time, 'xp': self.xp, 'yp': self.yp,
-                'ia': None if self.ia is None else self.ia.to_dict()}
+                'ia': None if self.ia is None else self.ia.to_dict(),
+                'letter': self.ia_char, 'letter_pos': self.ia_char_pos}
 
 class Fixation:
 
@@ -121,7 +276,9 @@ class Fixation:
                  pupil_size:float,
                  eye_side:str,
                  samples:List[Sample]|None=None,
-                 ia: InterestArea | None = None) -> None:
+                 ia: InterestArea | None = None,
+                 ia_char: str | None = None,
+                 ia_char_pos: int | None = None) -> None:
 
         self.event_type = "fixation"
         self.start_time = start_time
@@ -133,6 +290,8 @@ class Fixation:
         self.eye_side = eye_side
         self.samples = samples
         self.ia = ia
+        self.ia_char = ia_char
+        self.ia_char_pos = ia_char_pos
 
     def to_dict(self) -> dict:
 
@@ -145,6 +304,8 @@ class Fixation:
                 'pupil_size': self.pupil_size,
                 'eye_side': self.eye_side,
                 'ia': None if self.ia is None else self.ia.to_dict(),
+                'letter': self.ia_char,
+                'letter_pos': self.ia_char_pos,
                 'samples': None if self.samples is None else [sample.to_dict() for sample in self.samples if sample]}
 
 class Saccade:
@@ -416,16 +577,24 @@ class Trial:
 
     @ staticmethod
     def map_sample_to_word(ias, xp, yp):
-
-        word = None
+        # print(xp)
+        word, letter, letter_pos = None, None, None
         if ias:
             for ia in ias:
                 # check whether xp and yp are in the range of an IA corresponding to a word
                 # rounding down the decimal pixels of the fixation!!!
                 if ia.sxp <= int(xp) <= ia.exp and ia.syp <= int(yp) <= ia.eyp:
                     word = ia
-                    break
-        return word
+                    # print(word.word)
+                    # if fixation is on a word, locate which character in the word is at the fixation point
+                    for i, char in enumerate(ia.chars):
+                        if char.sxp <= xp < char.exp:
+                            letter = char.char
+                            letter_pos = i
+                            # print(char.char, i, char.sxp, char.exp)
+                            break
+        # print()
+        return word, letter, letter_pos
 
     def map_samples_to_words(self, text, snap_to_lines, line_assignment_method):
 
@@ -438,15 +607,19 @@ class Trial:
 
             if event.event_type=='fixation':
 
-                word = self.map_sample_to_word(text.ias, event.xp, event.yp)
+                word, letter, letter_pos = self.map_sample_to_word(text.ias, event.xp, event.yp)
                 self.events[event_i].ia = word
+                self.events[event_i].ia_char = letter
+                self.events[event_i].ia_char_pos = letter_pos
 
                 if event.samples:
 
                     for sample_i, sample in enumerate(event.samples):
 
-                        word = self.map_sample_to_word(text.ias, sample.xp, sample.yp)
+                        word, letter, letter_pos = self.map_sample_to_word(text.ias, sample.xp, sample.yp)
                         self.events[event_i].samples[sample_i].ia = word
+                        self.events[event_i].samples[sample_i].ia_char = letter
+                        self.events[event_i].samples[sample_i].ia_char_pos = letter_pos
 
     @staticmethod
     def parse_samples_from_event_block(event_block:List[str]) -> List[Sample]:
@@ -642,25 +815,25 @@ class TrialSequence:
         with open(path, 'w') as f:
             json.dump(all_trials, f, indent=4)
 
-def adjust_ia_boxes(words_df: pd.DataFrame, path_to_save: str = '') -> pd.DataFrame:
+def adjust_ia_boxes(words_df: pd.DataFrame, x_pixels = (0,0), y_pixels= (-15,+15), path_to_save: str = '') -> pd.DataFrame:
 
-    # words_df['x_beginning'] = words_df['x_beginning'] + 2
-    # words_df['x_end'] = words_df['x_end'] + 2
-    words_df['y_beginning'] = words_df['y_beginning'] - 5
-    words_df['y_end'] = words_df['y_end'] + 5
+    words_df['x_beginning'] = words_df['x_beginning'] + x_pixels[0]
+    words_df['x_end'] = words_df['x_end'] + x_pixels[1]
+    words_df['y_beginning'] = words_df['y_beginning'] + y_pixels[0]
+    words_df['y_end'] = words_df['y_end'] + y_pixels[1]
 
     if path_to_save:
         words_df.to_csv(path_to_save, index=False)
 
     return words_df
 
-def convert_xy_coordinates(words_df: pd.DataFrame, path_to_save: str = '') -> pd.DataFrame:
+def convert_xy_coordinates(words_df: pd.DataFrame, screen_resolution = (1920,1080), path_to_save: str = '') -> pd.DataFrame:
 
     # convert xy coordinates from opensesame (0,0 at centre) reference to eyelink reference (0,0 at top left)
-    words_df['x_beginning_new'] = words_df['x_beginning'].apply(lambda x: x + 512)
-    words_df['x_end_new'] = words_df['x_end'].apply(lambda x: x + 512)
-    words_df['y_beginning_new'] = words_df['y_beginning'].apply(lambda x: x + 384)
-    words_df['y_end_new'] = words_df['y_end'].apply(lambda x: x + 384)
+    words_df['x_beginning_new'] = words_df['x_beginning'].apply(lambda x: x + screen_resolution[0]/2)
+    words_df['x_end_new'] = words_df['x_end'].apply(lambda x: x + screen_resolution[0]/2)
+    words_df['y_beginning_new'] = words_df['y_beginning'].apply(lambda x: x + screen_resolution[1]/2)
+    words_df['y_end_new'] = words_df['y_end'].apply(lambda x: x + screen_resolution[1]/2)
 
     if path_to_save:
         words_df.to_csv(path_to_save, index=False)
@@ -672,7 +845,8 @@ def change_manipulation_names(words_df: pd.DataFrame, path_to_save: str = '') ->
     map_manipulation_names = {'bionic_reading': 'block_bionic',
                               'normal_reading': 'block_normal',
                               'word_importance_reading': 'block_word_importance',
-                              'part_of_speech_reading': 'block_part_of_speech'}
+                              'part_of_speech_reading': 'block_part_of_speech',
+                              'bionic_pvl': 'block_bionic_pvl'}
 
     words_df['text_manipulation'] = words_df['text_manipulation'].apply(lambda x: map_manipulation_names[x])
 
@@ -694,6 +868,8 @@ def create_word_dataframe(trial_sequence: TrialSequence) -> pd.DataFrame:
                 'dur': [], # e.g. 300 (in milliseconds)
                 'word_id': [], # e.g. 0
                 'word': [], # e.g. "Toen"
+                'letter': [], # which character in the word the fixation was on
+                'letter_id': [], # which character position in the word the fixation was on
                 'in_sacc_start': [], # (x,y) coordinates of start of incoming saccade (in pixels)
                 'in_sacc_end': [], # (x,y) coordinates of end of incoming saccade (in pixels)
                 'in_sacc_len': [], # in words
@@ -702,7 +878,7 @@ def create_word_dataframe(trial_sequence: TrialSequence) -> pd.DataFrame:
                 'out_sacc_end': [], # (x,y) coordinates of end of outgoing saccade (in pixels)
                 'out_sacc_len': [], # in words
                 'out_sacc_dur': [], # in milliseconds
-                'line_change': [] # whether there was a line change from previous fixation to current fixation
+                'line_change': [], # whether there was a line change from previous fixation to current fixation
                 }
 
     for trial in trial_sequence.trials:
@@ -719,12 +895,18 @@ def create_word_dataframe(trial_sequence: TrialSequence) -> pd.DataFrame:
                 data_cols['xp'].append(event.xp)
                 data_cols['yp'].append(event.yp)
                 data_cols['dur'].append(event.dur)
-                word_id, word = None,None
+                word_id, word, letter, letter_id = None,None,None,None
                 if event.ia:
                     word_id = event.ia.word_id
                     word = event.ia.word
+                if event.ia_char:
+                    letter = event.ia_char
+                if event.ia_char_pos:
+                    letter_id = event.ia_char_pos
                 data_cols['word_id'].append(word_id)
                 data_cols['word'].append(word)
+                data_cols['letter'].append(letter)
+                data_cols['letter_id'].append(letter_id)
                 counter += 1
 
                 # previous and upcoming fixations
@@ -787,19 +969,6 @@ def create_word_dataframe(trial_sequence: TrialSequence) -> pd.DataFrame:
 
     return data
 
-def find_letter_x_location(word, word_location):
-
-    letter_pos_to_pixels = []
-    # TODO check if it is okay to assume that each letter has the same width (same number of pixels)
-    letter_pixels = (word_location[1] - word_location[0])/len(word)
-    begin_location = word_location[0]
-
-    for i in range(len(word)):
-        letter_pos_to_pixels.append((begin_location, begin_location + letter_pixels))
-        begin_location += letter_pixels
-
-    return letter_pos_to_pixels
-
 def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame) -> pd.DataFrame:
 
     reading_data_rows = []
@@ -837,7 +1006,6 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
                             'out_sacc_len': None,  # Length in words of first outgoing saccade
                             'out_sacc_dur': None,  # Duration in milliseconds of first outgoing saccade
                             'line_change': None, # If first incoming saccade resulted in line change
-                            'landing_pos': None
                             }
 
                 # if any fixation on word
@@ -853,14 +1021,6 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
 
                         row_dict['skip'] = 0
                         row_dict['first_fix_dur'] = word_fix_data['dur'].tolist()[0]
-
-                        # map pixels to letters and determine which letter the fixation was at
-                        fix_x_loc = word_fix_data['xp'].tolist()[0]
-                        letter_x_locations = find_letter_x_location(word.word_name, (word.x_beginning_new, word.x_end_new))
-                        for i, x_loc in enumerate(letter_x_locations):
-                            if x_loc[0] <= fix_x_loc < x_loc[1]:
-                                row_dict['landing_pos'] = i
-                                break
 
                         # gather first reading fixations
                         fix_ids_first_pass = [first_fix_id]
@@ -923,62 +1083,155 @@ def compute_reading_measures(fixation_data:pd.DataFrame, word_data:pd.DataFrame)
 
     return reading_df
 
+def sanity_checks(word_fixation_df, exp_type, participant_id, verbose=False):
+
+    if verbose:
+        print(
+            f"{len(word_fixation_df['paragraph_id'].unique())} unique texts were read")  # number of unique paragraphs read (should be 80)
+        for manipulation, rows in word_fixation_df.groupby('manipulation'):
+            print(
+                f"{manipulation}: {len(rows['paragraph_id'].unique())} unique texts")  # number of unique paragraphs read per condition (should be 20)
+
+    # compute mean, std, range of fixations not in IAs across texts
+    nan_counts = word_fixation_df["word_id"].isna().groupby(word_fixation_df["paragraph_id"]).sum()
+    nan_summary = nan_counts.agg(mean="mean", std="std", min="min", max="max")
+    if verbose:
+        print('\nSummary of fixations not in IAs')
+        print(nan_summary)
+
+    # compute mean, std, range of fixations in IAs across texts
+    counts = word_fixation_df["word_id"].notna().groupby(word_fixation_df["paragraph_id"]).sum()
+    summary = counts.agg(mean="mean", std="std", min="min", max="max")
+    if verbose:
+        print('\nSummary of fixations in IAs')
+        print(summary)
+
+    # compute mean, std, range of fixation durations in IAs across texts
+    per_text_means = (word_fixation_df[word_fixation_df["word_id"].notna()].groupby("paragraph_id")["dur"].mean())
+    stats = per_text_means.agg(mean="mean", std="std", min="min", max="max")
+    if verbose:
+        print('\nSummary of fixation durations in IAs')
+        print(stats)
+
+    # compute mean, std, range of fixation durations in IAs per text
+    filepath_to_save_dur = f'data/{exp_type}/sub_{participant_id}/sanity_check_fix_dur_sub_{participant_id}.csv'
+    df_words = word_fixation_df[word_fixation_df["word_id"].notna()]
+    dur_summary = (df_words.groupby("paragraph_id")["dur"].agg(mean="mean", std="std", min="min", max="max"))
+    dur_summary.to_csv(filepath_to_save_dur)
+    if verbose:
+        print(f'\nSummary of fixation durations in IAs per text saved to {filepath_to_save_dur}')
+
+    # save counts of fixations in IAs and not in IAs per text
+    filepath_to_save = f'data/{exp_type}/sub_{participant_id}/sanity_check_fix_counts_sub_{participant_id}.csv'
+    summary_df = (pd.concat([counts.rename("number_of_fixations_in_IA"), nan_counts.rename("number_of_fixations_NOT_in_IA"), ],
+                  axis=1).fillna(0).astype(int).reset_index())
+    manipulation_per_paragraph = (word_fixation_df.groupby("paragraph_id")["manipulation"].first())
+    summary_df = summary_df.merge(manipulation_per_paragraph,on="paragraph_id",how="left")
+    summary_df.to_csv(filepath_to_save)
+    if verbose:
+        print(f'\nSummary of fixation counts in IAs and not in IAs per text saved to {filepath_to_save}')
+
+    # check if any text with standard deviation = NaN
+    if verbose:
+        print('\nAny text with very few fixations?')
+        print(dur_summary["std"].isna().sum())
+
+    # save out sum stats
+    log_filepath = f'data/{exp_type}/sub_{participant_id}/sanity_check_stats_sub_{participant_id}.txt'
+    with open(log_filepath, "w") as f:
+        f.write(f"{len(word_fixation_df['paragraph_id'].unique())} unique texts were read\n")
+        for manipulation, rows in word_fixation_df.groupby('manipulation'):
+            f.write(f"{manipulation}: {len(rows['paragraph_id'].unique())} unique texts\n")
+        f.write('\nSummary of fixations not in IAs\n')
+        f.write(nan_summary.to_string())
+        f.write('\nSummary of fixations in IAs\n')
+        f.write(summary.to_string())
+        f.write('\nSummary of fixation durations in IAs\n')
+        f.write(stats.to_string())
+        f.write(f'\n\nSummary of fixation durations in IAs per text saved to {filepath_to_save_dur}\n')
+        f.write(f'\nSummary of fixation counts in IAs and not in IAs per text saved to {filepath_to_save}\n')
+        f.write('\nAny text with very few fixations?\n')
+        f.write(str(dur_summary["std"].isna().sum()))
+
 def main():
 
-    # data with word coordinates in opensesame experiment screen, needed to map x,y coordinates from eye-tracker to ia words
-    word_path = 'data/word_coordinates_subject_0.csv'
-    words_df = pd.read_csv(word_path)
-    # optionally adjust IA boxes around words
-    # words_df = adjust_ia_boxes(words_df, path_to_save=word_path)
-    # map xy coordinates from opensesame to xy coordinates from eyelink
-    words_df = convert_xy_coordinates(words_df, path_to_save=word_path.replace('.csv', '_converted.csv'))
-    words_df = change_manipulation_names(words_df, path_to_save=word_path.replace('.csv', '_converted.csv'))
-    words_df = pd.read_csv('data/word_coordinates_subject_0_adjusted_converted.csv')
+    exp_type = 'exp_pvl'
+    exp_variables_filepath = 'data/words_without_punct.csv' # 'data/words_GroNLP_bert-base-dutch-cased.csv'
+    participant_ids = ['0','1','2','3','4','5','6']
 
-    # create a TextBlock with IAs for every text
-    texts = []
-    for text_info, data in words_df.groupby(['paragraph', 'text_manipulation']):
-        text = TextBlock(text_id=str(text_info[0]), manipulation=text_info[1],
-                         screen_width=1024, screen_height=768,
-                         font_size=22, font_face='Serif')
-        text.parse_text_into_ias(data)
-        text.find_line_height(data)
-        text.find_midlines(data)
-        texts.append(text)
+    for participant_id in participant_ids:
 
-    # data with log output from eye-tracker, converted from edf to asc
-    asc_path = 'data/sub_0.asc'
+        # data with word coordinates in opensesame experiment screen, needed to map x,y coordinates from eye-tracker to ia words
+        word_path = f'data/{exp_type}/sub_{participant_id}/word_coordinates_subject_{participant_id}.csv'
+        words_df = pd.read_csv(word_path)
+        adjust_ia_box = True # increase ia boxes
+        convert_coordinates = True # map xy coordinates from opensesame to xy coordinates from eyelink
+        rename_conditions = True # rename conditions to be the same as in the eye-tracker log file
+        if adjust_ia_box:
+            word_path = word_path.replace('.csv', '_adjusted.csv')
+            words_df = adjust_ia_boxes(words_df)
+        if convert_coordinates:
+            word_path = word_path.replace('.csv', '_converted.csv')
+            words_df = convert_xy_coordinates(words_df)
+        if rename_conditions:
+            word_path = word_path.replace('.csv', '_renamed.csv')
+            words_df = change_manipulation_names(words_df)
+        words_df.to_csv(word_path, index=False)
 
-    # parse trials from acs file
-    parse_samples = False
-    trial_sequence = TrialSequence(asc_path)
-    trial_sequence.parse_trial_blocks(parse_samples=parse_samples)
+        # create a TextBlock with IAs for every text
+        # words_df = pd.read_csv('data/exp_pvl/word_coordinates_subject_0_adjusted_converted_renamed.csv')
+        experiment_variables_data = pd.read_csv(exp_variables_filepath)
 
-    # mapping fixation locations to words
-    snap_to_lines = False
-    trial_sequence.map_events_to_ias(texts=texts, snap_to_lines=snap_to_lines)
+        if exp_type == 'exp_pvl': exp_variables = ['pvl', 'pos_tag']
+        elif exp_type == 'exp_saliency': exp_variables = ['pos_tag','norm_saliency']
+        else: raise ValueError('exp_type must be exp_pvl or exp_saliency')
 
-    # # # visualise fixations on texts
-    # # for trial in trial_sequence.trials:
-    # #     visualise_fixations_on_text(trial)
+        texts = []
+        for text_info, data in words_df.groupby(['paragraph', 'text_manipulation']):
+            text = TextBlock(text_id=str(text_info[0]),
+                             exp_type=exp_type,
+                             manipulation=text_info[1],
+                             screen_width=1920, screen_height=1080,
+                             font_size=22, font_face='Droid Serif')
+            text_variables_data = experiment_variables_data[experiment_variables_data['trial_id']==int(text_info[0])]
+            text.parse_text_into_ias(data, text_variables_data, exp_variables)
+            text.find_line_height(data)
+            text.find_midlines(data)
+            texts.append(text)
 
-    # save trial info dict as json
-    path_to_save_json = f'data/trials_{trial_sequence.participant_id}.json'
-    if parse_samples:
-        path_to_save_json = path_to_save_json.replace('.json', '_samples.json')
-    if snap_to_lines:
-        path_to_save_json = path_to_save_json.replace('.json', '_line_correction.json')
-    trial_sequence.to_json(path_to_save_json)
+        # data with log output from eye-tracker, converted from edf to asc
+        asc_path = f'data/{exp_type}/sub_{participant_id}/sub_{participant_id}.asc'
 
-    # create dataframe with info on fixations (each row is a fixation)
-    word_fixation_df = create_word_dataframe(trial_sequence)
-    word_fixation_df.to_csv('data/fixation_data.csv', index=False)
+        # parse trials from acs file
+        parse_samples = False
+        trial_sequence = TrialSequence(asc_path)
+        trial_sequence.parse_trial_blocks(parse_samples=parse_samples)
+        # mapping fixation locations to words
+        snap_to_lines = False
+        trial_sequence.map_events_to_ias(texts=texts, snap_to_lines=snap_to_lines)
 
-    # compute reading measures (each row is a word)
-    word_fixation_df = pd.read_csv('data/fixation_data.csv')
-    words_df = pd.read_csv('data/word_coordinates_subject_0_adjusted_converted.csv')
-    reading_data = compute_reading_measures(word_fixation_df, words_df)
-    reading_data.to_csv('data/reading_measures.csv', index=False)
+        # save trial info dict as json
+        path_to_save_json = f'data/{exp_type}/sub_{participant_id}/trials_sub_{participant_id}.json'
+        if parse_samples:
+            path_to_save_json = path_to_save_json.replace('.json', '_samples.json')
+        if snap_to_lines:
+            path_to_save_json = path_to_save_json.replace('.json', '_line_correction.json')
+        trial_sequence.to_json(path_to_save_json)
+
+        # create dataframe with info on fixations (each row is a fixation)
+        word_fixation_df = create_word_dataframe(trial_sequence)
+        word_fixation_df.to_csv(f'data/{exp_type}/sub_{participant_id}/fixation_data_sub_{participant_id}.csv', index=False)
+
+        # sanity checks on fixation data
+        word_fixation_df = pd.read_csv(f'data/{exp_type}/sub_{participant_id}/fixation_data_sub_{participant_id}.csv')
+        sanity_checks(word_fixation_df, exp_type, participant_id)
+
+        # TODO add fixation letter location
+        # # compute reading measures (each row is a word)
+        # # word_fixation_df = pd.read_csv(f'data/{exp_type}/sub_{participant_id}/fixation_data_sub_{participant_id}.csv')
+        # # words_df = pd.read_csv(word_path)
+        # reading_data = compute_reading_measures(word_fixation_df, words_df)
+        # reading_data.to_csv(f'data/{exp_type}/sub_{participant_id}/reading_measures_sub_{participant_id}.csv', index=False)
 
 if __name__ == '__main__':
     main()
