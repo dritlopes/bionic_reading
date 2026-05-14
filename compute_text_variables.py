@@ -2,14 +2,14 @@ import re
 import pandas as pd
 import spacy
 from collections import defaultdict
-import math
 from spacy.cli import download
-from spacy_syllables import SpacySyllables
-from compute_saliency import calculate_saliency_values, processing_to_align_with_opensesame
-from scipy import stats
+from torch import nn
 import numpy as np
-import seaborn as sns
-from matplotlib import pyplot as plt
+from compute_saliency import calculate_saliency_values, processing_to_align_with_opensesame
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
+import string
+import os
+from wordfreq import zipf_frequency
 
 def create_text_and_question_files(chatgpt_output_filepath):
 
@@ -177,13 +177,27 @@ def get_letter_segments(word):
 
     return [start_segment, pvl_segment, end_segment]
 
-def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True, pvl=True):
+def create_word_file(texts_df:pd.DataFrame,
+                     syllabify=True,
+                     pos_tag=True,
+                     length=True,
+                     pvl=True,
+                     spacy_model_name:str='en_core_web_sm'):
+
+    # Try loading the model. If not found, download and load it
+    try:
+        nlp = spacy.load(spacy_model_name)
+    except OSError:
+        print(f"Model '{spacy_model_name}' not found. Downloading...")
+        download(spacy_model_name)
+        nlp = spacy.load(spacy_model_name)
 
     if syllabify:
         nlp.add_pipe("syllables", after="tagger")
 
     df_dict = defaultdict(list)
 
+    # tokenize texts and compute per token its pos tag, length, pvl segmentation and syllable segmentation
     for text_id, text in zip(texts_df['trial_id'].tolist(),texts_df['text'].tolist()):
         doc = nlp(text)
         word_id = 0
@@ -206,9 +220,109 @@ def create_word_file(texts_df, nlp, syllabify=True, pos_tag=True, length=True, p
             if pvl:
                 df_dict['pvl'].append(get_letter_segments(word))
 
-    df = pd.DataFrame(df_dict)
+    words_df = pd.DataFrame(df_dict)
 
-    return df
+    return words_df
+
+def add_frequency(words_df:pd.DataFrame, frequency_resource:str=''):
+
+    frequency_values = []
+
+    # Get frequencies from SUBTLEX-NL
+    if '.xlsx' in frequency_resource:
+
+        edge_cases = {'kletterde': 'kletteren',
+                      'nagenietend': 'nagenieten',
+                      'wegdrijvend': 'wegdrijven',
+                      'familiegoud': ['familie', 'goud'],
+                      'dorpsindustrie': ['dorp', 'industrie'],
+                      'muziekspeelgoed': ['muziek', 'speelgoed'],
+                      'weekenduitjes': ['weekend', 'uitjes']}
+
+        df = pd.read_excel(frequency_resource)
+
+        freq_dict = dict()
+        for word, freq in zip(df['Word'].tolist(), df['Zipf'].tolist()):
+            freq_dict[str(word)] = float(freq)
+
+        for word in words_df['word'].tolist():
+            # word is in SUBTLEX-NL
+            if word.lower() in freq_dict.keys():
+                frequency_values.append(freq_dict[word.lower()])
+            # edge cases
+            elif word in edge_cases.keys():
+                if isinstance(edge_cases[word], str):
+                    frequency_values.append(zipf_frequency(edge_cases[word], "nl"))
+                # if a compound, try to split the compound and average the frequencies of the parts
+                else:
+                    mean_frequency = (zipf_frequency(edge_cases[word][0], "nl") + zipf_frequency(edge_cases[word][1],
+                                                                                                 "nl")) / 2
+                    frequency_values.append(mean_frequency)
+            # try wordfreq python package
+            else:
+                frequency_values.append(zipf_frequency(word.lower(), "nl"))
+
+        words_df['frequency'] = frequency_values
+
+    else:
+        raise ValueError('Frequency resource not implemented.')
+
+    return words_df
+
+def compute_surprisal(words_df:pd.DataFrame, llm_name='GroNLP/gpt2-small-dutch'):
+
+    if 'gpt2' in llm_name:
+        model = GPT2LMHeadModel.from_pretrained(llm_name)
+        tokenizer = GPT2Tokenizer.from_pretrained(llm_name)
+        model.eval()
+    else:
+        raise Exception('Model must have gpt2 in its name.')
+
+    surprisal_values = []
+
+    for text, rows in words_df.groupby('trial_id'):
+
+        previous_context = ''
+
+        for i, next_word in enumerate(rows['word'].tolist()):
+
+            if i == 0:
+                # first word in text does not have context to compute surprisal
+                surprisal_values.append(None)
+                previous_context = next_word
+
+            else:
+                # if word is punctuation do not add whitespace before it
+                if 'pos_tag' in rows.columns:
+                    if rows['pos_tag'].tolist()[i] != 'PUNCT':
+                        next_word = ' ' + next_word
+                elif next_word not in string.punctuation:
+                    next_word = ' ' + next_word
+
+                next_word_id = tokenizer(next_word, return_tensors='pt')["input_ids"][0]
+
+                total_word_surprisal = 0.0  # to deal with multi-token words
+                for i, token_id in enumerate(next_word_id):
+                    # do not include surprisal from punctuation if punctuation attached to word
+                    if tokenizer.decode([token_id]) not in string.punctuation:
+                        # tokenize previous context
+                        encoded_input = tokenizer(previous_context, return_tensors='pt')
+                        output = model(**encoded_input)
+                        # logits are scores from output layer of shape (batch_size, sequence_length, vocab_size)
+                        logits = output.logits[:, -1, :]
+                        # convert raw scores into probabilities (between 0 and 1)
+                        probabilities = nn.functional.softmax(logits,
+                                                              dim=1)  # softmax transforms the values from logits into percentages
+                        next_token_prob = probabilities[0, token_id]
+                        next_token_prob = next_token_prob.cpu().detach().numpy()
+                        surprisal = -np.log2(next_token_prob)
+                        total_word_surprisal += surprisal
+                    previous_context += tokenizer.decode([token_id])
+                surprisal_values.append(total_word_surprisal)
+
+    words_df['surprisal'] = surprisal_values
+
+    return words_df
 
 def test_alignment_opensesame_words(spacy_df, os_df):
 
@@ -231,45 +345,68 @@ def test_alignment_opensesame_words(spacy_df, os_df):
 
 def main():
 
-    # Sort texts and questions from chatgpt output into a csv file
+    # File paths
     chatgpt_texts_filepath = "data/chatgpt_texts.txt"
     texts_filepath = "data/texts.csv"
     questions_filepath = "data/questions.csv"
+    words_filepath = "data/words.csv"
+    words_no_punct_filepath = 'data/words_without_punct.csv'
+    os_words_filepath = 'data/word_coordinates_subject_0.csv'
+
+    # Word variables to compute
+    syllabify = False
+    pos_tag = True
+    length = True
+    pvl = True
+    frequency = True
+    surprisal = True
+
+    # Model names
+    spacy_model_name = "nl_core_news_sm"
+    language_model_name = "GroNLP/gpt2-small-dutch"
+    saliency_language_model_name = "GroNLP/bert-base-dutch-cased"
+    frequency_resource = 'data/SUBTLEX-NL with pos and Zipf.xlsx'
+
+    # Sort texts and questions from chatgpt output into a csv file
+    print('Creating files with texts and questions...')
     texts_df, questions_df = create_text_and_question_files(chatgpt_texts_filepath)
     texts_df.to_csv(texts_filepath, index=False)
     questions_df.to_csv(questions_filepath, index=False)
 
     # Create csv with each word as a row (word data)
-    spacy_model_name = "nl_core_news_sm"
-    words_filepath = "data/words.csv"
-    syllabify, pos_tag, length, pvl = True, True, True, True
-    # Try loading the model. If not found, download and load it
-    try:
-        nlp = spacy.load(spacy_model_name)
-    except OSError:
-        print(f"Model '{spacy_model_name}' not found. Downloading...")
-        download(spacy_model_name)
-        nlp = spacy.load(spacy_model_name)
+    print('Creating word file...')
     texts_df = pd.read_csv(texts_filepath)
-    words_df = create_word_file(texts_df, nlp, syllabify, pos_tag, length, pvl)
-    words_df = add_missing_syllables(words_df)
+    words_df = create_word_file(texts_df,
+                                syllabify=syllabify,
+                                pos_tag=pos_tag,
+                                length=length,
+                                pvl=pvl,
+                                spacy_model_name=spacy_model_name)
+    if frequency:
+        words_df = pd.read_csv(words_filepath)
+        words_df = add_frequency(words_df, frequency_resource)
+    if surprisal:
+        words_df = compute_surprisal(words_df, language_model_name)
+    if syllabify:
+        words_df = add_missing_syllables(words_df)
     words_df.to_csv(words_filepath, index=False)
-    # check alignment between spacy words and open sesame words
+
+    # Extract saliency values and add them as a column to word data
+    print(f'Computing saliency values...')
+    texts_df = pd.read_csv(texts_filepath)
+    words_df = pd.read_csv(words_filepath)
+    words_df = calculate_saliency_values(texts_df, words_df, saliency_language_model_name)
+    words_df.to_csv(words_filepath, index=False)
+
+    # Check alignment between spacy words and open sesame words
+    print(f'Checking alignment with OpenSesame words...')
     words_df = pd.read_csv(words_filepath)
     words_df_without_punct = processing_to_align_with_opensesame(words_df)
-    words_df_without_punct.to_csv('data/words_without_punct.csv', index=False)
-    os_df = pd.read_csv('data/word_coordinates_subject_0.csv')
+    words_df_without_punct.to_csv(words_no_punct_filepath, index=False)
+    os_df = pd.read_csv(os_words_filepath)
     test_alignment_opensesame_words(words_df_without_punct, os_df)
 
-    # Extract saliency values and added them as a column to word data
-    language_model_name = "GroNLP/bert-base-dutch-cased" # "GroNLP/gpt2-small-dutch"
-    saliency_path = f'data/{language_model_name.replace("/","_")}_saliency.csv'
-    final_data_path = f'data/words_{language_model_name.replace("/","_")}.csv'
-    texts_df = pd.read_csv('data/texts.csv')
-    words_df = pd.read_csv('data/words.csv')
-    saliency_df, words_plus_saliency_df = calculate_saliency_values(texts_df, words_df, language_model_name, saliency_path)
-    saliency_df.to_csv(saliency_path, index=False)
-    words_plus_saliency_df.to_csv(final_data_path, index=False)
+    print('DONE!')
 
 if __name__ == "__main__":
     main()

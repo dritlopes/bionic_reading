@@ -1157,7 +1157,7 @@ def main():
 
     exp_type = 'exp_pvl'
     exp_variables_filepath = 'data/words_without_punct.csv' # 'data/words_GroNLP_bert-base-dutch-cased.csv'
-    participant_ids = ['0','1','2','3','4','5','6']
+    participant_ids = ['10']
 
     for participant_id in participant_ids:
 
@@ -1227,7 +1227,7 @@ def main():
         sanity_checks(word_fixation_df, exp_type, participant_id)
 
         # TODO add fixation letter location
-        # # compute reading measures (each row is a word)
+        # compute reading measures (each row is a word)
         # # word_fixation_df = pd.read_csv(f'data/{exp_type}/sub_{participant_id}/fixation_data_sub_{participant_id}.csv')
         # # words_df = pd.read_csv(word_path)
         # reading_data = compute_reading_measures(word_fixation_df, words_df)

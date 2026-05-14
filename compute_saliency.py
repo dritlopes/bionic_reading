@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from transformers import TFGPT2LMHeadModel, GPT2Tokenizer, TFAutoModel
+from transformers import TFGPT2LMHeadModel, GPT2Tokenizer
 from transformers import TFBertForMaskedLM, BertTokenizer
 import pandas as pd
 import keras
@@ -275,7 +275,7 @@ def normalize_saliency(group):
     group['norm_saliency'] = norm_saliency
     return group
 
-def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, model_name:str, saliency_path) -> pd.DataFrame:
+def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, model_name:str) -> pd.DataFrame:
 
     """
     Compute gradient saliency values for a given dataset.
@@ -307,6 +307,7 @@ def calculate_saliency_values(texts_df:pd.DataFrame, words_df:pd.DataFrame, mode
         raise ValueError(f'Model {model_name} not supported.')
 
     print(f'Extract saliency with {model_name}')
+    saliency_path = f'data/{model.replace("/", "_")}_saliency.csv'
     saliency_df = extract_all_saliency(model, embeddings, tokenizer, texts, model_name, saliency_path)
     # saliency_df = pd.read_csv(saliency_path)
     saliencies = saliency_df.saliency_sum.values
